@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+/* Ocultar barras de scroll globalmente manteniendo la funcionalidad */
+::-webkit-scrollbar {
+  display: none !important;
+}
+
+html, body, #root, * {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
