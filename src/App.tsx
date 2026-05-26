@@ -51,6 +51,7 @@ import {
   Trophy,
   Edit3,
   LogOut,
+  Upload,
 } from "lucide-react";
 import {
   Area,
@@ -86,6 +87,7 @@ type ParsedTransaction = {
   source: InputSource;
   rawInput?: string;
   needsConfirmation: boolean;
+  paymentMethod?: "card" | "cash";
 };
 
 type Transaction = ParsedTransaction & {
@@ -169,7 +171,11 @@ const quickExamples = [
 ];
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function addDays(days: number) {
@@ -179,7 +185,11 @@ function addDays(days: number) {
 }
 
 function addDaysISO(days: number) {
-  return addDays(days).toISOString().slice(0, 10);
+  const d = addDays(days);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function cleanSpaces(value: string) {
@@ -263,6 +273,23 @@ function inferNote(input: string, category: string, amountToken: string) {
   return cleaned === "Movimiento" ? category : cleaned;
 }
 
+function inferPaymentMethod(input: string): "card" | "cash" {
+  const text = input.toLowerCase();
+  if (
+    text.includes("tarjeta") ||
+    text.includes("debito") ||
+    text.includes("débito") ||
+    text.includes("credito") ||
+    text.includes("crédito") ||
+    text.includes("tc") ||
+    text.includes("transferencia") ||
+    text.includes("transferi")
+  ) {
+    return "card";
+  }
+  return "cash";
+}
+
 function parseExpenseInput(input: string, source: InputSource = "text", customCategories?: Category[]): ParsedTransaction {
   const rawInput = input.trim();
   const amountInfo = extractAmount(rawInput);
@@ -274,7 +301,18 @@ function parseExpenseInput(input: string, source: InputSource = "text", customCa
   if (category !== "Otros") confidence += 0.2;
   if (note) confidence += 0.08;
   confidence = Math.min(0.98, Number(confidence.toFixed(2)));
-  return { type, amount: amountInfo.amount, category, note, date: getRelativeDate(rawInput), confidence, source, rawInput, needsConfirmation: confidence < 0.82 || !amountInfo.amount || category === "Otros" };
+  return { 
+    type, 
+    amount: amountInfo.amount, 
+    category, 
+    note, 
+    date: getRelativeDate(rawInput), 
+    confidence, 
+    source, 
+    rawInput, 
+    needsConfirmation: confidence < 0.82 || !amountInfo.amount || category === "Otros",
+    paymentMethod: inferPaymentMethod(rawInput)
+  };
 }
 
 function formatSmartDate(dateISO: string) {
@@ -448,12 +486,13 @@ function TransactionForm({ onPreview, initial, customCategories, onOpenCreateCat
   const [note, setNote] = useState(initial?.note || "");
   const [date, setDate] = useState(initial?.date || todayISO());
   const [type, setType] = useState<TransactionType>(initial?.type || "expense");
-  return <div className="space-y-3"><div className="grid grid-cols-2 gap-2"><button onClick={() => setType("expense")} className={cx("rounded-2xl px-4 py-3 text-sm font-black", type === "expense" ? "bg-[#fff1f2] text-[#e11d48]" : "bg-[#f7f8fc] text-[#6b7280]")}>Gasto</button><button onClick={() => setType("income")} className={cx("rounded-2xl px-4 py-3 text-sm font-black", type === "income" ? "bg-[#ecfdf5] text-[#059669]" : "bg-[#f7f8fc] text-[#6b7280]")}>Ingreso</button></div><div className="grid grid-cols-2 gap-3"><EditField label="Monto" value={amount} onChange={setAmount} /><EditField label="Fecha" value={date} type="date" onChange={setDate} /></div><label className="block rounded-2xl border border-[#e5e7eb] bg-[#f7f8fc] px-3 py-2"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Categoría</span><select value={category} onChange={(event) => { if (event.target.value === "__new__") { onOpenCreateCategory((newName) => setCategory(newName)); } else { setCategory(event.target.value); } }} className="mt-1 w-full bg-transparent text-sm font-black outline-none">{customCategories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}<option value="__new__">+ Crear nueva...</option></select></label><EditField label="Nota" value={note} placeholder="Ej. Tacos Don Pepe" onChange={setNote} /><button onClick={() => onPreview({ amount: normalizeNumber(amount), category, note: note || category, date, type, confidence: 1, source: initial?.source || "manual", rawInput: note, needsConfirmation: false })} className="w-full rounded-2xl bg-[#111827] px-4 py-3 text-sm font-black text-white">Revisar antes de guardar</button></div>;
+  const [paymentMethod, setPaymentMethod] = useState<"card" | "cash">(initial?.paymentMethod || "cash");
+  return <div className="space-y-3"><div className="grid grid-cols-2 gap-2"><button onClick={() => setType("expense")} className={cx("rounded-2xl px-4 py-3 text-sm font-black", type === "expense" ? "bg-[#fff1f2] text-[#e11d48]" : "bg-[#f7f8fc] text-[#6b7280]")}>Gasto</button><button onClick={() => setType("income")} className={cx("rounded-2xl px-4 py-3 text-sm font-black", type === "income" ? "bg-[#ecfdf5] text-[#059669]" : "bg-[#f7f8fc] text-[#6b7280]")}>Ingreso</button></div><div className="grid grid-cols-2 gap-3"><EditField label="Monto" value={amount} onChange={setAmount} /><EditField label="Fecha" value={date} type="date" onChange={setDate} /></div><div className="grid grid-cols-2 gap-3"><label className="block rounded-2xl border border-[#e5e7eb] bg-[#f7f8fc] px-3 py-2"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Categoría</span><select value={category} onChange={(event) => { if (event.target.value === "__new__") { onOpenCreateCategory((newName) => setCategory(newName)); } else { setCategory(event.target.value); } }} className="mt-1 w-full bg-transparent text-sm font-black outline-none">{customCategories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}<option value="__new__">+ Crear nueva...</option></select></label><label className="block rounded-2xl border border-[#e5e7eb] bg-[#f7f8fc] px-3 py-2"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Método de pago</span><select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as "card" | "cash")} className="mt-1 w-full bg-transparent text-sm font-black outline-none"><option value="cash">💵 Efectivo</option><option value="card">💳 Tarjeta</option></select></label></div><EditField label="Nota" value={note} placeholder="Ej. Tacos Don Pepe" onChange={setNote} /><button onClick={() => onPreview({ amount: normalizeNumber(amount), category, note: note || category, date, type, confidence: 1, source: initial?.source || "manual", rawInput: note, needsConfirmation: false, paymentMethod })} className="w-full rounded-2xl bg-[#111827] px-4 py-3 text-sm font-black text-white">Revisar antes de guardar</button></div>;
 }
 
 function ParsedExpensePreview({ parsed, onChange, onSave, onCancel, customCategories, onOpenCreateCategory }: { parsed: ParsedTransaction; onChange: (transaction: ParsedTransaction) => void; onSave: (transaction: ParsedTransaction) => void; onCancel: () => void; customCategories: Category[]; onOpenCreateCategory: (callback: (name: string) => void) => void }) {
   const category = getCategory(parsed.category, customCategories);
-  return <motion.div initial={{ opacity: 0, y: 14, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} className="mt-4 overflow-hidden rounded-[1.6rem] border border-[#e5e7eb] bg-white shadow-[0_16px_40px_rgba(15,23,42,0.08)]"><div className="flex items-center justify-between border-b border-[#f1f5f9] p-4"><div><p className="text-sm font-black">Detecté este {parsed.type === "income" ? "ingreso" : "gasto"}</p><p className="mt-1 text-xs font-semibold text-[#6b7280]">Revisa y guarda. Confianza: {Math.round(parsed.confidence * 100)}%</p></div><div className="grid h-11 w-11 place-items-center rounded-2xl" style={{ backgroundColor: `${category.color}20`, color: category.color }}><CategoryIcon name={parsed.category} customCategories={customCategories} /></div></div>{parsed.needsConfirmation && <div className="mx-4 mt-4 flex gap-2 rounded-2xl bg-[#fff7ed] p-3 text-xs font-bold text-[#c2410c]"><AlertTriangle className="h-4 w-4 shrink-0" /><span>Revisa antes de guardar. Hay datos con baja confianza.</span></div>}<div className="grid grid-cols-2 gap-3 p-4"><EditField label="Monto" value={String(parsed.amount || "")} onChange={(value) => onChange({ ...parsed, amount: normalizeNumber(value || "0") })} /><label className="rounded-2xl bg-[#f7f8fc] px-3 py-2"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Tipo</span><select value={parsed.type} onChange={(event) => onChange({ ...parsed, type: event.target.value as TransactionType })} className="mt-1 w-full bg-transparent text-sm font-black outline-none"><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label><label className="rounded-2xl bg-[#f7f8fc] px-3 py-2"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Categoría</span><select value={parsed.category} onChange={(event) => { if (event.target.value === "__new__") { onOpenCreateCategory((newName) => onChange({ ...parsed, category: newName })); } else { onChange({ ...parsed, category: event.target.value }); } }} className="mt-1 w-full bg-transparent text-sm font-black outline-none">{customCategories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}<option value="__new__">+ Crear nueva...</option></select></label><EditField label="Fecha" value={parsed.date} type="date" onChange={(value) => onChange({ ...parsed, date: value })} /><div className="col-span-2"><EditField label="Nota" value={parsed.note} onChange={(value) => onChange({ ...parsed, note: value })} /></div></div>{parsed.rawInput && <p className="mx-4 mb-4 rounded-2xl bg-[#f7f8fc] p-3 text-xs font-semibold text-[#6b7280]">Entrada original: “{parsed.rawInput}”</p>}<div className="grid grid-cols-2 gap-3 border-t border-[#f1f5f9] p-4"><button onClick={onCancel} className="rounded-2xl bg-[#f1f5f9] px-4 py-3 text-sm font-black text-[#6b7280]">Cancelar</button><button onClick={() => onSave(parsed)} className="rounded-2xl bg-[linear-gradient(135deg,#42d6b5_0%,#5aa9ff_100%)] px-4 py-3 text-sm font-black text-white shadow-[0_12px_30px_rgba(66,214,181,0.22)]">Guardar</button></div></motion.div>;
+  return <motion.div initial={{ opacity: 0, y: 14, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} className="mt-4 overflow-hidden rounded-[1.6rem] border border-[#e5e7eb] bg-white shadow-[0_16px_40px_rgba(15,23,42,0.08)]"><div className="flex items-center justify-between border-b border-[#f1f5f9] p-4"><div><p className="text-sm font-black">Detecté este {parsed.type === "income" ? "ingreso" : "gasto"}</p><p className="mt-1 text-xs font-semibold text-[#6b7280]">Revisa y guarda. Confianza: {Math.round(parsed.confidence * 100)}%</p></div><div className="grid h-11 w-11 place-items-center rounded-2xl" style={{ backgroundColor: `${category.color}20`, color: category.color }}><CategoryIcon name={parsed.category} customCategories={customCategories} /></div></div>{parsed.needsConfirmation && <div className="mx-4 mt-4 flex gap-2 rounded-2xl bg-[#fff7ed] p-3 text-xs font-bold text-[#c2410c]"><AlertTriangle className="h-4 w-4 shrink-0" /><span>Revisa antes de guardar. Hay datos con baja confianza.</span></div>}<div className="grid grid-cols-2 gap-3 p-4"><EditField label="Monto" value={String(parsed.amount || "")} onChange={(value) => onChange({ ...parsed, amount: normalizeNumber(value || "0") })} /><label className="rounded-2xl bg-[#f7f8fc] px-3 py-2"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Tipo</span><select value={parsed.type} onChange={(event) => onChange({ ...parsed, type: event.target.value as TransactionType })} className="mt-1 w-full bg-transparent text-sm font-black outline-none"><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label><label className="rounded-2xl bg-[#f7f8fc] px-3 py-2"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Categoría</span><select value={parsed.category} onChange={(event) => { if (event.target.value === "__new__") { onOpenCreateCategory((newName) => onChange({ ...parsed, category: newName })); } else { onChange({ ...parsed, category: event.target.value }); } }} className="mt-1 w-full bg-transparent text-sm font-black outline-none">{customCategories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}<option value="__new__">+ Crear nueva...</option></select></label><label className="rounded-2xl bg-[#f7f8fc] px-3 py-2"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Método de pago</span><select value={parsed.paymentMethod || "cash"} onChange={(event) => onChange({ ...parsed, paymentMethod: event.target.value as "card" | "cash" })} className="mt-1 w-full bg-transparent text-sm font-black outline-none"><option value="cash">💵 Efectivo</option><option value="card">💳 Tarjeta</option></select></label><div className="col-span-2"><EditField label="Fecha" value={parsed.date} type="date" onChange={(value) => onChange({ ...parsed, date: value })} /></div><div className="col-span-2"><EditField label="Nota" value={parsed.note} onChange={(value) => onChange({ ...parsed, note: value })} /></div></div>{parsed.rawInput && <p className="mx-4 mb-4 rounded-2xl bg-[#f7f8fc] p-3 text-xs font-semibold text-[#6b7280]">Entrada original: “{parsed.rawInput}”</p>}<div className="grid grid-cols-2 gap-3 border-t border-[#f1f5f9] p-4"><button onClick={onCancel} className="rounded-2xl bg-[#f1f5f9] px-4 py-3 text-sm font-black text-[#6b7280]">Cancelar</button><button onClick={() => onSave(parsed)} className="rounded-2xl bg-[linear-gradient(135deg,#42d6b5_0%,#5aa9ff_100%)] px-4 py-3 text-sm font-black text-white shadow-[0_12px_30px_rgba(66,214,181,0.22)]">Guardar</button></div></motion.div>;
 }
 
 function EditField({ label, value, onChange, type = "text", placeholder = "" }: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string }) {
@@ -567,7 +606,7 @@ function InsightCard({ type, title, description }: { type: "warning" | "success"
 function TransactionItem({ transaction, onDuplicate, onDelete, onEdit, customCategories }: { transaction: Transaction; onDuplicate?: (transaction: Transaction) => void; onDelete?: (id: string) => void; onEdit?: (transaction: Transaction) => void; customCategories?: Category[] }) {
   const category = getCategory(transaction.category, customCategories);
   const amountPrefix = transaction.type === "income" ? "+" : "-";
-  return <motion.div layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -20 }} className="group flex items-center gap-3 rounded-[1.4rem] bg-white p-3 shadow-sm ring-1 ring-[#e5e7eb]"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl" style={{ backgroundColor: `${category.color}18`, color: category.color }}><CategoryIcon name={transaction.category} customCategories={customCategories} /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-black tracking-[-0.02em]">{transaction.note}</p><div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-bold text-[#94a3b8]"><span>{transaction.category}</span><span>·</span><span>{formatSmartDate(transaction.date)}</span><span>·</span><span className="rounded-full bg-[#f1f5f9] px-2 py-0.5">{transaction.source === "voice" ? "Voz" : transaction.source === "text" ? "Texto" : transaction.source === "recurring" ? "Recurrente" : transaction.source === "manual" ? "Manual" : "IA"}</span></div></div><div className="text-right"><p className={cx("text-sm font-black", transaction.type === "income" ? "text-[#059669]" : "text-[#111827]")}>{amountPrefix}{pesos.format(transaction.amount)}</p><div className="mt-2 flex justify-end gap-1"><button onClick={() => onEdit?.(transaction)} className="grid h-7 w-7 place-items-center rounded-full bg-[#eef2ff] text-[#7c6df2] transition active:scale-90"><Edit3 className="h-3.5 w-3.5" /></button><button onClick={() => onDuplicate?.(transaction)} className="grid h-7 w-7 place-items-center rounded-full bg-[#f1f5f9] text-[#6b7280] transition active:scale-90"><Copy className="h-3.5 w-3.5" /></button><button onClick={() => onDelete?.(transaction.id)} className="grid h-7 w-7 place-items-center rounded-full bg-[#fff1f2] text-[#e11d48] transition active:scale-90"><Trash2 className="h-3.5 w-3.5" /></button></div></div></motion.div>;
+  return <motion.div layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -20 }} className="group flex items-center gap-3 rounded-[1.4rem] bg-white p-3 shadow-sm ring-1 ring-[#e5e7eb]"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl" style={{ backgroundColor: `${category.color}18`, color: category.color }}><CategoryIcon name={transaction.category} customCategories={customCategories} /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-black tracking-[-0.02em]">{transaction.note}</p><div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-bold text-[#94a3b8]"><span>{transaction.category}</span><span>·</span><span>{formatSmartDate(transaction.date)}</span><span>·</span><span className="rounded-full bg-[#f1f5f9] px-2 py-0.5">{transaction.source === "voice" ? "Voz" : transaction.source === "text" ? "Texto" : transaction.source === "recurring" ? "Recurrente" : transaction.source === "manual" ? "Manual" : "IA"}</span><span>·</span><span className="rounded-full bg-[#f1f5f9] px-2 py-0.5">{transaction.paymentMethod === "card" ? "💳 Tarjeta" : "💵 Efectivo"}</span></div></div><div className="text-right"><p className={cx("text-sm font-black", transaction.type === "income" ? "text-[#059669]" : "text-[#111827]")}>{amountPrefix}{pesos.format(transaction.amount)}</p><div className="mt-2 flex justify-end gap-1"><button onClick={() => onEdit?.(transaction)} className="grid h-7 w-7 place-items-center rounded-full bg-[#eef2ff] text-[#7c6df2] transition active:scale-90"><Edit3 className="h-3.5 w-3.5" /></button><button onClick={() => onDuplicate?.(transaction)} className="grid h-7 w-7 place-items-center rounded-full bg-[#f1f5f9] text-[#6b7280] transition active:scale-90"><Copy className="h-3.5 w-3.5" /></button><button onClick={() => onDelete?.(transaction.id)} className="grid h-7 w-7 place-items-center rounded-full bg-[#fff1f2] text-[#e11d48] transition active:scale-90"><Trash2 className="h-3.5 w-3.5" /></button></div></div></motion.div>;
 }
 
 function TransactionTimeline({ transactions, onDuplicate, onDelete, onEdit, limit, customCategories }: { transactions: Transaction[]; onDuplicate?: (transaction: Transaction) => void; onDelete?: (id: string) => void; onEdit?: (transaction: Transaction) => void; limit?: number; customCategories?: Category[] }) {
@@ -617,6 +656,7 @@ function MoreView({
   customCategories,
   onOpenCreateCategory,
   onSignOut,
+  onResetData,
 }: {
   section: MoreSection;
   setSection: (section: MoreSection) => void;
@@ -631,12 +671,13 @@ function MoreView({
   customCategories: Category[];
   onOpenCreateCategory: (callback: (name: string) => void) => void;
   onSignOut?: () => void;
+  onResetData?: () => void;
 }) {
   if (section === "reports") return <ReportsView transactions={transactions} budget={budget} onBack={() => setSection("menu")} customCategories={customCategories} />;
   if (section === "goals") return <GoalsView goals={goals} setGoals={setGoals} onBack={() => setSection("menu")} />;
   if (section === "recurring") return <RecurringView recurring={recurring} setRecurring={setRecurring} onBack={() => setSection("menu")} customCategories={customCategories} onOpenCreateCategory={onOpenCreateCategory} />;
   if (section === "export") return <ExportView transactions={transactions} goals={goals} recurring={recurring} profile={profile} budget={budget} onBack={() => setSection("menu")} />;
-  if (section === "account" || section === "settings") return <AccountView profile={profile} setProfile={setProfile} onBack={() => setSection("menu")} onSignOut={onSignOut} />;
+  if (section === "account" || section === "settings") return <AccountView profile={profile} setProfile={setProfile} onBack={() => setSection("menu")} onSignOut={onSignOut} onResetData={onResetData} />;
   
   const cards = [{ id: "account", title: "Mi cuenta", subtitle: "Nickname, foto, moneda y datos útiles", icon: User, gradient: "bg-[linear-gradient(135deg,#7c6df2_0%,#5aa9ff_100%)]" }, { id: "goals", title: "Metas de ahorro", subtitle: "Crea metas y suma aportaciones", icon: PiggyBank, gradient: "bg-[linear-gradient(135deg,#36d399_0%,#42d6b5_100%)]" }, { id: "recurring", title: "Gastos recurrentes", subtitle: "Netflix, renta, servicios y ahorro", icon: Repeat, gradient: "bg-[linear-gradient(135deg,#42d6b5_0%,#5aa9ff_100%)]" }, { id: "reports", title: "Reportes avanzados", subtitle: "Gráficas diarias, semanales, mensuales y anuales", icon: BarChart3, gradient: "bg-[linear-gradient(135deg,#7c6df2_0%,#b794f4_100%)]" }, { id: "export", title: "Exportar datos", subtitle: "CSV y JSON listos para respaldo", icon: Download, gradient: "bg-[#111827]" }, { id: "settings", title: "Configuración", subtitle: "Preferencias de cuenta", icon: Settings, gradient: "bg-[linear-gradient(135deg,#ffc857_0%,#ff8a65_100%)]" }] as const;
   
@@ -921,9 +962,26 @@ function ExportView({ transactions, goals, recurring, profile, budget, onBack }:
   return <div className="px-5 pt-5 pb-8"><SectionHeader title="Exportar" subtitle="Respalda tus movimientos en CSV o JSON." onBack={onBack} /><div className="mt-5 grid grid-cols-2 gap-3"><button onClick={() => download(csv, "monia-movimientos.csv", "text/csv")} className="rounded-[1.6rem] bg-white p-4 text-left shadow-sm ring-1 ring-[#e5e7eb] cursor-pointer"><FileDown className="mb-3 h-7 w-7 text-[#5aa9ff]" /><p className="font-black">CSV</p><p className="text-xs font-bold text-[#6b7280]">Para Excel o Sheets</p></button><button onClick={() => download(json, "monia-respaldo.json", "application/json")} className="rounded-[1.6rem] bg-white p-4 text-left shadow-sm ring-1 ring-[#e5e7eb] cursor-pointer"><Download className="mb-3 h-7 w-7 text-[#7c6df2]" /><p className="font-black">JSON</p><p className="text-xs font-bold text-[#6b7280]">Respaldo completo</p></button></div><section className="mt-5 rounded-[1.6rem] bg-white p-4 shadow-sm ring-1 ring-[#e5e7eb]"><div className="mb-3 flex items-center justify-between"><p className="text-sm font-black">Vista previa CSV</p><Clipboard className="h-4 w-4 text-[#94a3b8]" /></div><pre className="max-h-72 overflow-auto rounded-2xl bg-[#111827] p-3 text-[11px] font-semibold text-white/85 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{csv}</pre></section></div>;
 }
 
-function AccountView({ profile, setProfile, onBack, onSignOut }: { profile: UserProfile; setProfile: React.Dispatch<React.SetStateAction<UserProfile>>; onBack: () => void; onSignOut?: () => void }) {
+function AccountView({ profile, setProfile, onBack, onSignOut, onResetData }: { profile: UserProfile; setProfile: React.Dispatch<React.SetStateAction<UserProfile>>; onBack: () => void; onSignOut?: () => void; onResetData?: () => void }) {
   const googlePhoto = auth.currentUser?.photoURL;
   const emojiPresets = ["🦁", "🦊", "🐼", "🚀", "💰", "💎", "🦄", "👻", "⚡", "🍀"];
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 500 * 1024) {
+      alert("La imagen es muy grande. Por favor, selecciona una imagen menor a 500 KB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result as string;
+      setProfile((p) => ({ ...p, photoUrl: base64String }));
+    };
+    reader.readAsDataURL(file);
+  };
 
   return <div className="px-5 pt-5 pb-8"><SectionHeader title="Mi cuenta" subtitle="Perfil con datos útiles para personalizar tus finanzas." onBack={onBack} /><section className="mt-5 rounded-[2rem] bg-white p-5 shadow-sm ring-1 ring-[#e5e7eb]"><div className="flex items-center gap-4"><UserAvatar photoUrl={profile.photoUrl} nickname={profile.nickname} size="lg" /><div className="flex-1"><p className="text-lg font-black">{profile.nickname}</p><p className="text-xs font-bold text-[#6b7280]">{profile.email}</p><p className="mt-2 inline-flex rounded-full bg-[#effdf8] px-3 py-1 text-xs font-black text-[#2ec4b6] shadow-sm"><ShieldCheck className="mr-1 h-3.5 w-3.5" />Perfil seguro en la nube</p></div></div>
   
@@ -951,6 +1009,20 @@ function AccountView({ profile, setProfile, onBack, onSignOut }: { profile: User
           Foto Google
         </button>
       )}
+      <label
+        htmlFor="avatar-file-upload"
+        className="flex items-center gap-1.5 px-3 py-2 text-xs font-black rounded-xl bg-[#f1f5f9] border border-[#e2e8f0] hover:bg-[#e2e8f0] active:scale-95 transition cursor-pointer"
+      >
+        <Upload className="h-3.5 w-3.5 text-[#6b7280]" />
+        Subir Foto
+      </label>
+      <input
+        type="file"
+        id="avatar-file-upload"
+        accept="image/*"
+        onChange={handleFileChange}
+        className="hidden"
+      />
     </div>
   </div>
 
@@ -960,6 +1032,25 @@ function AccountView({ profile, setProfile, onBack, onSignOut }: { profile: User
       <LogOut className="h-4 w-4" />
       Cerrar sesión
     </button>
+  )}
+  
+  {onResetData && (
+    <section className="mt-5 rounded-[1.6rem] bg-white p-5 shadow-sm ring-1 ring-red-200 border border-red-100">
+      <h3 className="text-sm font-black text-red-600 flex items-center gap-1.5">
+        <AlertTriangle className="h-4 w-4 text-red-500" />
+        Zona de peligro
+      </h3>
+      <p className="mt-1 text-xs font-semibold leading-relaxed text-[#6b7280]">
+        Restablece por completo tu cuenta. Se borrarán permanentemente todos tus movimientos, presupuestos, metas y configuraciones del dispositivo y de la nube.
+      </p>
+      <button
+        onClick={onResetData}
+        className="mt-3.5 w-full rounded-2xl bg-red-50 hover:bg-red-100 px-4 py-3 text-sm font-black text-red-600 border border-red-200 active:scale-[0.98] transition flex items-center justify-center gap-1.5"
+      >
+        <Trash2 className="h-4 w-4" />
+        Restablecer todos los datos
+      </button>
+    </section>
   )}
   </div>;
 }
@@ -976,7 +1067,7 @@ function EditTransactionModal({ transaction, onClose, onSave, customCategories, 
   const [draft, setDraft] = useState<Transaction | null>(transaction);
   useEffect(() => setDraft(transaction), [transaction]);
   if (!transaction || !draft) return null;
-  return <AnimatePresence><motion.div className="fixed inset-0 z-[90] mx-auto max-w-[460px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><button className="absolute inset-0 bg-[#111827]/36 backdrop-blur-[2px]" onClick={onClose} /><motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="absolute inset-x-0 bottom-0 rounded-t-[2.2rem] bg-white p-5 pb-8 shadow-[0_-30px_80px_rgba(15,23,42,0.28)]"><div className="mb-4 flex items-center justify-between"><div><p className="text-lg font-black">Editar movimiento</p><p className="text-xs font-bold text-[#6b7280]">Corrige monto, categoría, nota o fecha.</p></div><button onClick={onClose} className="grid h-10 w-10 place-items-center rounded-2xl bg-[#f7f8fc] cursor-pointer"><X className="h-5 w-5" /></button></div><div className="space-y-3"><div className="grid grid-cols-2 gap-2"><button onClick={() => setDraft({ ...draft, type: "expense" })} className={cx("rounded-2xl px-4 py-3 text-sm font-black", draft.type === "expense" ? "bg-[#fff1f2] text-[#e11d48]" : "bg-[#f7f8fc] text-[#6b7280]")}>Gasto</button><button onClick={() => setDraft({ ...draft, type: "income" })} className={cx("rounded-2xl px-4 py-3 text-sm font-black", draft.type === "income" ? "bg-[#ecfdf5] text-[#059669]" : "bg-[#f7f8fc] text-[#6b7280]")}>Ingreso</button></div><div className="grid grid-cols-2 gap-3"><EditField label="Monto" value={String(draft.amount)} onChange={(v) => setDraft({ ...draft, amount: normalizeNumber(v) })} /><EditField label="Fecha" type="date" value={draft.date} onChange={(v) => setDraft({ ...draft, date: v })} /></div><label className="block rounded-2xl bg-[#f7f8fc] px-3 py-2 border border-[#e5e7eb]"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Categoría</span><select value={draft.category} onChange={(e) => { if (e.target.value === "__new__") { onOpenCreateCategory((newName) => setDraft({ ...draft, category: newName, categoryId: getCategory(newName, customCategories).id })); } else { setDraft({ ...draft, category: e.target.value, categoryId: getCategory(e.target.value, customCategories).id }); } }} className="mt-1 w-full bg-transparent text-sm font-black outline-none">{customCategories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}<option value="__new__">+ Crear nueva...</option></select></label><EditField label="Nota" value={draft.note} onChange={(v) => setDraft({ ...draft, note: v })} /><button onClick={() => onSave({ ...draft, updatedAt: new Date().toISOString() })} className="w-full rounded-2xl bg-[linear-gradient(135deg,#42d6b5_0%,#5aa9ff_100%)] px-4 py-3 text-sm font-black text-white cursor-pointer">Guardar cambios</button></div></motion.div></motion.div></AnimatePresence>;
+  return <AnimatePresence><motion.div className="fixed inset-0 z-[90] mx-auto max-w-[460px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><button className="absolute inset-0 bg-[#111827]/36 backdrop-blur-[2px]" onClick={onClose} /><motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="absolute inset-x-0 bottom-0 rounded-t-[2.2rem] bg-white p-5 pb-8 shadow-[0_-30px_80px_rgba(15,23,42,0.28)]"><div className="mb-4 flex items-center justify-between"><div><p className="text-lg font-black">Editar movimiento</p><p className="text-xs font-bold text-[#6b7280]">Corrige monto, categoría, nota o fecha.</p></div><button onClick={onClose} className="grid h-10 w-10 place-items-center rounded-2xl bg-[#f7f8fc] cursor-pointer"><X className="h-5 w-5" /></button></div><div className="space-y-3"><div className="grid grid-cols-2 gap-2"><button onClick={() => setDraft({ ...draft, type: "expense" })} className={cx("rounded-2xl px-4 py-3 text-sm font-black", draft.type === "expense" ? "bg-[#fff1f2] text-[#e11d48]" : "bg-[#f7f8fc] text-[#6b7280]")}>Gasto</button><button onClick={() => setDraft({ ...draft, type: "income" })} className={cx("rounded-2xl px-4 py-3 text-sm font-black", draft.type === "income" ? "bg-[#ecfdf5] text-[#059669]" : "bg-[#f7f8fc] text-[#6b7280]")}>Ingreso</button></div><div className="grid grid-cols-2 gap-3"><EditField label="Monto" value={String(draft.amount)} onChange={(v) => setDraft({ ...draft, amount: normalizeNumber(v) })} /><EditField label="Fecha" type="date" value={draft.date} onChange={(v) => setDraft({ ...draft, date: v })} /></div><div className="grid grid-cols-2 gap-3"><label className="block rounded-2xl bg-[#f7f8fc] px-3 py-2 border border-[#e5e7eb]"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Categoría</span><select value={draft.category} onChange={(e) => { if (e.target.value === "__new__") { onOpenCreateCategory((newName) => setDraft({ ...draft, category: newName, categoryId: getCategory(newName, customCategories).id })); } else { setDraft({ ...draft, category: e.target.value, categoryId: getCategory(e.target.value, customCategories).id }); } }} className="mt-1 w-full bg-transparent text-sm font-black outline-none">{customCategories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}<option value="__new__">+ Crear nueva...</option></select></label><label className="block rounded-2xl bg-[#f7f8fc] px-3 py-2 border border-[#e5e7eb]"><span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Método de pago</span><select value={draft.paymentMethod || "cash"} onChange={(e) => setDraft({ ...draft, paymentMethod: e.target.value as "card" | "cash" })} className="mt-1 w-full bg-transparent text-sm font-black outline-none"><option value="cash">💵 Efectivo</option><option value="card">💳 Tarjeta</option></select></label></div><EditField label="Nota" value={draft.note} onChange={(v) => setDraft({ ...draft, note: v })} /><button onClick={() => onSave({ ...draft, updatedAt: new Date().toISOString() })} className="w-full rounded-2xl bg-[linear-gradient(135deg,#42d6b5_0%,#5aa9ff_100%)] px-4 py-3 text-sm font-black text-white cursor-pointer">Guardar cambios</button></div></motion.div></motion.div></AnimatePresence>;
 }
 
 function Toast({ message }: { message: string }) {
@@ -1014,31 +1105,24 @@ function LandingView({ onLogin }: { onLogin: () => void }) {
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ type: "spring", stiffness: 200, damping: 20 }}
-            className="w-20 h-20 rounded-[2rem] bg-[linear-gradient(135deg,#42d6b5_0%,#5aa9ff_100%)] flex items-center justify-center shadow-[0_20px_45px_rgba(66,214,181,0.35)] relative"
+            className="w-24 h-24 rounded-[2.2rem] overflow-hidden flex items-center justify-center shadow-[0_20px_45px_rgba(66,214,181,0.35)] relative bg-white p-2"
           >
-            <Sparkles className="w-10 h-10 text-white" />
-            <motion.span 
-              animate={{ scale: [1, 1.2, 1] }} 
-              transition={{ repeat: Infinity, duration: 3 }}
-              className="absolute -right-2 -top-2 w-6 h-6 rounded-full bg-white flex items-center justify-center text-[#2ec4b6] shadow-md border border-[#eefdf8]"
-            >
-              <PiggyBank className="w-3.5 h-3.5" />
-            </motion.span>
+            <img src="/logo_mark.png" alt="MonIA" className="w-full h-full object-contain" />
           </motion.div>
           
-          <motion.h1 
+          <motion.div 
             initial={{ y: 15, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.15 }}
-            className="mt-6 text-4xl font-black tracking-[-0.05em] bg-[linear-gradient(135deg,#111827_0%,#4b5563_100%)] bg-clip-text text-transparent"
+            className="mt-6 flex justify-center"
           >
-            App MonIA
-          </motion.h1>
+            <img src="/logo_full.png" alt="MonIA Logo" className="h-14 object-contain" />
+          </motion.div>
           <motion.p 
             initial={{ y: 15, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="mt-2 text-sm font-semibold text-[#6b7280] text-center"
+            className="mt-4 text-sm font-semibold text-[#6b7280] text-center max-w-[280px]"
           >
             Tu asistente financiero inteligente con IA local
           </motion.p>
@@ -1463,17 +1547,56 @@ export default function MonIAGastosPreview() {
     setMoreSection("goals");
   };
 
+  const handleResetData = async () => {
+    if (!window.confirm("¿Estás seguro de que quieres restablecer tu cuenta? Se eliminarán de forma permanente todos tus movimientos, presupuestos, metas, gastos recurrentes y configuración. Esta acción no se puede deshacer.")) {
+      return;
+    }
+
+    try {
+      setTransactions([]);
+      setBudget(cleanBudget);
+      setGoals([]);
+      setRecurring([]);
+      
+      const cleanProf = defaultProfileEmpty(
+        user?.email || "", 
+        user?.displayName?.split(" ")[0] || "Usuario", 
+        user?.photoURL || ""
+      );
+      setProfile(cleanProf);
+      setCategoriesState(initialCategories);
+
+      if (user) {
+        const docRef = doc(db, "users", user.uid);
+        await setDoc(docRef, {
+          transactions: [],
+          budget: cleanBudget,
+          goals: [],
+          recurring: [],
+          profile: cleanProf,
+          categories: initialCategories,
+        });
+      }
+
+      showToast("¡Cuenta restablecida con éxito!");
+      setMoreSection("menu");
+    } catch (error) {
+      console.error("Error al restablecer la cuenta:", error);
+      showToast("Error al restablecer datos.");
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#f7f8fc] text-[#111827] flex flex-col items-center justify-center antialiased">
         <div className="mx-auto w-full max-w-[460px] min-h-screen flex flex-col items-center justify-center p-6 bg-[#f7f8fc] shadow-[0_0_80px_rgba(15,23,42,0.08)]">
           <div className="relative flex flex-col items-center justify-center">
             <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ repeat: Infinity, duration: 2.5, ease: "linear" }}
-              className="relative w-20 h-20 rounded-[1.8rem] bg-[linear-gradient(135deg,#42d6b5_0%,#5aa9ff_100%)] flex items-center justify-center shadow-[0_15px_35px_rgba(66,214,181,0.3)]"
+              animate={{ scale: [1, 1.08, 1] }}
+              transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
+              className="relative w-24 h-24 rounded-[2.2rem] overflow-hidden flex items-center justify-center shadow-[0_15px_35px_rgba(66,214,181,0.3)] bg-white p-2"
             >
-              <Sparkles className="w-10 h-10 text-white" />
+              <img src="/logo_mark.png" alt="MonIA" className="w-full h-full object-contain" />
             </motion.div>
             <motion.p
               animate={{ opacity: [0.4, 1, 0.4] }}
@@ -1574,6 +1697,7 @@ export default function MonIAGastosPreview() {
               showToast("Error al cerrar sesión.");
             }
           }}
+          onResetData={handleResetData}
         />
       </motion.div>
     )}
