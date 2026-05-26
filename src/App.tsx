@@ -110,6 +110,8 @@ type BudgetConfig = {
   totalByPeriod: Record<BudgetPeriod, number>;
   categoryLimits: Record<string, number>;
   alerts: Record<string, boolean>;
+  startDayOfWeek?: number;
+  startDayOfMonth?: number;
 };
 
 type Goal = {
@@ -367,13 +369,61 @@ function startOfDay(date = new Date()) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-function isWithinPeriod(dateISO: string, period: BudgetPeriod) {
+function isWithinPeriod(dateISO: string, budget: BudgetConfig) {
   const date = startOfDay(new Date(`${dateISO}T12:00:00`));
   const now = startOfDay();
-  const diffDays = Math.floor((+now - +date) / 86400000);
-  if (period === "week") return diffDays >= 0 && diffDays < 7;
-  if (period === "biweek") return diffDays >= 0 && diffDays < 15;
-  if (period === "month") return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+  const period = budget.period;
+
+  if (period === "week") {
+    const startDay = budget.startDayOfWeek !== undefined ? budget.startDayOfWeek : 1; // Default Monday
+    let diff = now.getDay() - startDay;
+    if (diff < 0) {
+      diff += 7;
+    }
+    const startOfCurrentPeriod = new Date(now.getTime() - diff * 86400000);
+    const endOfCurrentPeriod = new Date(startOfCurrentPeriod.getTime() + 6 * 86400000);
+    return date >= startOfCurrentPeriod && date <= endOfCurrentPeriod;
+  }
+
+  if (period === "biweek") {
+    let startOfCurrentPeriod: Date;
+    let endOfCurrentPeriod: Date;
+    if (now.getDate() <= 15) {
+      startOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
+      endOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), 15);
+    } else {
+      startOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), 16);
+      endOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth() + 1, 0); // last day of month
+    }
+    return date >= startOfCurrentPeriod && date <= endOfCurrentPeriod;
+  }
+
+  if (period === "month") {
+    const startDay = budget.startDayOfMonth !== undefined ? budget.startDayOfMonth : 1; // Default 1
+    if (startDay === 1) {
+      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+    } else {
+      const getClippedDay = (year: number, month: number, targetDay: number) => {
+        const lastDay = new Date(year, month + 1, 0).getDate();
+        return Math.min(targetDay, lastDay);
+      };
+      let startOfCurrentPeriod: Date;
+      let endOfCurrentPeriod: Date;
+      const currentStartDayClipped = getClippedDay(now.getFullYear(), now.getMonth(), startDay);
+
+      if (now.getDate() >= currentStartDayClipped) {
+        startOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), currentStartDayClipped);
+        const nextMonthLastDay = getClippedDay(now.getFullYear(), now.getMonth() + 1, startDay);
+        endOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth() + 1, nextMonthLastDay - 1);
+      } else {
+        const prevMonthLastDay = getClippedDay(now.getFullYear(), now.getMonth() - 1, startDay);
+        startOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth() - 1, prevMonthLastDay);
+        endOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), currentStartDayClipped - 1);
+      }
+      return date >= startOfCurrentPeriod && date <= endOfCurrentPeriod;
+    }
+  }
+
   return date.getFullYear() === now.getFullYear();
 }
 
@@ -446,13 +496,22 @@ function Header({ profile, budget, onGoAccount }: { profile: UserProfile; budget
 }
 
 function SmartBalanceCard({ transactions, budget }: { transactions: Transaction[]; budget: BudgetConfig }) {
-  const filtered = transactions.filter((t) => isWithinPeriod(t.date, budget.period));
+  const filtered = transactions.filter((t) => isWithinPeriod(t.date, budget));
   const income = filtered.filter((t) => t.type === "income").reduce((acc, t) => acc + t.amount, 0);
   const expenses = filtered.filter((t) => t.type === "expense").reduce((acc, t) => acc + t.amount, 0);
   const activeBudget = budget.totalByPeriod[budget.period];
-  const available = Math.max(activeBudget + income - expenses, 0);
-  const usedPercentage = Math.min(100, Math.round((expenses / Math.max(activeBudget, 1)) * 100));
-  return <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="mx-5 overflow-hidden rounded-[2rem] bg-[linear-gradient(135deg,#42d6b5_0%,#5aa9ff_100%)] p-5 text-white shadow-[0_24px_60px_rgba(66,214,181,0.28)]"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-white/80">Saldo disponible {periodLabel(budget.period)}</p><h2 className="mt-2 text-4xl font-black tracking-[-0.05em]">{pesos.format(available)}</h2><p className="mt-2 text-sm font-semibold text-white/82">Gastaste {pesos.format(expenses)} de {pesos.format(activeBudget)}</p></div><div className="rounded-2xl bg-white/18 p-3 backdrop-blur-md"><Wallet className="h-7 w-7" /></div></div><div className="mt-6"><div className="mb-2 flex items-center justify-between text-xs font-bold text-white/80"><span>Presupuesto usado</span><span>{usedPercentage}%</span></div><div className="h-3 rounded-full bg-white/22"><motion.div initial={{ width: 0 }} animate={{ width: `${usedPercentage}%` }} className="h-3 rounded-full bg-white shadow-sm" /></div></div><div className="mt-5 grid grid-cols-2 gap-3"><MetricGlass label="Ingresos" value={pesos.format(income)} /><MetricGlass label="Gastos" value={pesos.format(expenses)} /></div></motion.section>;
+  const available = activeBudget + income - expenses;
+  const isOverspent = available < 0;
+  const usedPercentage = Math.round((expenses / Math.max(activeBudget, 1)) * 100);
+
+  const cardGradient = isOverspent 
+    ? "bg-[linear-gradient(135deg,#ff6b6b_0%,#ff8a65_100%)]" 
+    : "bg-[linear-gradient(135deg,#42d6b5_0%,#5aa9ff_100%)]";
+  const cardShadow = isOverspent
+    ? "shadow-[0_24px_60px_rgba(255,107,107,0.32)]"
+    : "shadow-[0_24px_60px_rgba(66,214,181,0.28)]";
+
+  return <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className={cx("mx-5 overflow-hidden rounded-[2rem] p-5 text-white transition-all duration-300", cardGradient, cardShadow)}><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-white/80 flex items-center">Saldo disponible {periodLabel(budget.period)}{isOverspent && <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-black text-white uppercase tracking-wider animate-pulse ml-1.5 inline-flex items-center gap-0.5">⚠️ Sobregirado</span>}</p><h2 className="mt-2 text-4xl font-black tracking-[-0.05em]">{pesos.format(available)}</h2><p className="mt-2 text-sm font-semibold text-white/82">Gastaste {pesos.format(expenses)} de {pesos.format(activeBudget)}</p></div><div className="rounded-2xl bg-white/18 p-3 backdrop-blur-md"><Wallet className="h-7 w-7" /></div></div><div className="mt-6"><div className="mb-2 flex items-center justify-between text-xs font-bold text-white/80"><span>Presupuesto usado</span><span>{usedPercentage}%</span></div><div className="h-3 rounded-full bg-white/22"><motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(100, usedPercentage)}%` }} className="h-3 rounded-full bg-white shadow-sm" /></div></div><div className="mt-5 grid grid-cols-2 gap-3"><MetricGlass label="Ingresos" value={pesos.format(income)} /><MetricGlass label="Gastos" value={pesos.format(expenses)} /></div></motion.section>;
 }
 
 function MetricGlass({ label, value }: { label: string; value: string }) {
@@ -529,7 +588,7 @@ function HomeView({
   onOpenCreateCategory: (callback: (name: string) => void) => void;
 }) {
   const latest = [...transactions].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
-  const expensesThisPeriod = transactions.filter((t) => t.type === "expense" && isWithinPeriod(t.date, budget.period));
+  const expensesThisPeriod = transactions.filter((t) => t.type === "expense" && isWithinPeriod(t.date, budget));
   const top = byCategoryData(expensesThisPeriod, customCategories)[0];
   const todaySpent = transactions.filter((t) => t.type === "expense" && t.date === todayISO()).reduce((a, t) => a + t.amount, 0);
   return <div><Header profile={profile} budget={budget} onGoAccount={onGoAccount} /><div className="space-y-5">
@@ -624,12 +683,75 @@ function TransactionsView({ transactions, onDelete, onDuplicate, onEdit, customC
 }
 
 function BudgetsView({ transactions, budget, setBudget, customCategories }: { transactions: Transaction[]; budget: BudgetConfig; setBudget: React.Dispatch<React.SetStateAction<BudgetConfig>>; customCategories: Category[] }) {
-  const filtered = transactions.filter((item) => item.type === "expense" && isWithinPeriod(item.date, budget.period));
+  const filtered = transactions.filter((item) => item.type === "expense" && isWithinPeriod(item.date, budget));
   const spent = filtered.reduce((acc, item) => acc + item.amount, 0);
   const activeBudget = budget.totalByPeriod[budget.period];
   const progress = Math.round((spent / Math.max(activeBudget, 1)) * 100);
   const expenseByCategory = filtered.reduce<Record<string, number>>((acc, item) => { acc[item.category] = (acc[item.category] || 0) + item.amount; return acc; }, {});
-  return <div className="px-5 pt-5"><SectionHeader title="Presupuesto" subtitle="Control semanal, quincenal, mensual o anual editable." /><section className="mt-5 rounded-[2rem] bg-[linear-gradient(135deg,#7c6df2_0%,#b794f4_100%)] p-5 text-white shadow-[0_24px_60px_rgba(124,109,242,0.24)]"><div className="mb-4 flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{(["week", "biweek", "month", "year"] as BudgetPeriod[]).map((p) => <button key={p} onClick={() => setBudget((b) => ({ ...b, period: p }))} className={cx("shrink-0 rounded-full px-3 py-2 text-xs font-black", budget.period === p ? "bg-white text-[#7c6df2]" : "bg-white/16 text-white")}>{periodLabel(p)}</button>)}</div><p className="text-sm font-semibold text-white/78">Presupuesto {periodLabel(budget.period)}</p><div className="mt-2 flex items-center gap-2"><input value={budget.totalByPeriod[budget.period]} type="number" onChange={(event) => setBudget((b) => ({ ...b, totalByPeriod: { ...b.totalByPeriod, [b.period]: Number(event.target.value) || 0 } }))} className="min-w-0 flex-1 rounded-2xl bg-white/18 px-3 py-2 text-2xl font-black tracking-[-0.05em] text-white outline-none placeholder:text-white/50" /><Save className="h-5 w-5 text-white/75" /></div><p className="mt-2 text-sm font-semibold text-white/80">Has usado {pesos.format(spent)} · {progress}%</p><div className="mt-5 h-3 rounded-full bg-white/20"><motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(100, progress)}%` }} className="h-3 rounded-full bg-white" /></div></section><section className="mt-5 rounded-[1.6rem] bg-white p-4 shadow-sm ring-1 ring-[#e5e7eb]"><p className="text-sm font-black">Alertas activas</p><div className="mt-3 grid grid-cols-3 gap-2">{["50", "80", "100"].map((alert) => <button key={alert} onClick={() => setBudget((b) => ({ ...b, alerts: { ...b.alerts, [alert]: !b.alerts[alert] } }))} className={cx("rounded-2xl px-2 py-3 text-xs font-black", budget.alerts[alert] ? "bg-[#ecfdf5] text-[#059669]" : "bg-[#f1f5f9] text-[#94a3b8]")}><Bell className="mx-auto mb-1 h-4 w-4" />{alert}%</button>)}</div></section><div className="mt-5 space-y-3">{customCategories.filter((item) => item.name !== "Nómina").map((category) => <CategoryBudgetCard key={category.id} category={category} spent={expenseByCategory[category.name] || 0} limit={budget.categoryLimits[category.name] || 0} onLimitChange={(value) => setBudget((b) => ({ ...b, categoryLimits: { ...b.categoryLimits, [category.name]: value } }))} customCategories={customCategories} />)}</div></div>;
+
+  const isBudgetExceeded = spent > activeBudget && activeBudget > 0;
+  const budgetCardBg = isBudgetExceeded
+    ? "bg-[linear-gradient(135deg,#ff6b6b_0%,#ff8a65_100%)] shadow-[0_24px_60px_rgba(255,107,107,0.24)]"
+    : "bg-[linear-gradient(135deg,#7c6df2_0%,#b794f4_100%)] shadow-[0_24px_60px_rgba(124,109,242,0.24)]";
+
+  return <div className="px-5 pt-5"><SectionHeader title="Presupuesto" subtitle="Control semanal, quincenal, mensual o anual editable." /><section className={cx("mt-5 rounded-[2rem] p-5 text-white transition-all duration-300", budgetCardBg)}><div className="mb-4 flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{(["week", "biweek", "month", "year"] as BudgetPeriod[]).map((p) => <button key={p} onClick={() => setBudget((b) => ({ ...b, period: p }))} className={cx("shrink-0 rounded-full px-3 py-2 text-xs font-black", budget.period === p ? "bg-white text-[#7c6df2]" : "bg-white/16 text-white")}>{periodLabel(p)}</button>)}</div><p className="text-sm font-semibold text-white/78 flex items-center">Presupuesto {periodLabel(budget.period)}{isBudgetExceeded && <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-black text-white uppercase tracking-wider animate-pulse ml-1.5 inline-flex items-center gap-0.5">⚠️ Superado</span>}</p><div className="mt-2 flex items-center gap-2"><input value={budget.totalByPeriod[budget.period]} type="number" onChange={(event) => setBudget((b) => ({ ...b, totalByPeriod: { ...b.totalByPeriod, [b.period]: Number(event.target.value) || 0 } }))} className="min-w-0 flex-1 rounded-2xl bg-white/18 px-3 py-2 text-2xl font-black tracking-[-0.05em] text-white outline-none placeholder:text-white/50" /><Save className="h-5 w-5 text-white/75" /></div><p className="mt-2 text-sm font-semibold text-white/80">Has usado {pesos.format(spent)} · {progress}%</p><div className="mt-5 h-3 rounded-full bg-white/20"><motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(100, progress)}%` }} className="h-3 rounded-full bg-white" /></div></section>
+
+      {/* Configuración de reinicio del periodo */}
+      {(budget.period === "week" || budget.period === "month") && (
+        <section className="mt-5 rounded-[1.6rem] bg-white p-4 shadow-sm ring-1 ring-[#e5e7eb] space-y-3">
+          <p className="text-sm font-black flex items-center gap-1.5 text-[#111827]">
+            <CalendarDays className="h-4 w-4 text-[#7c6df2]" />
+            Reiniciar periodo presupuesto
+          </p>
+          {budget.period === "week" && (
+            <label className="block rounded-2xl bg-[#f7f8fc] px-3 py-2 border border-[#e5e7eb]">
+              <span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Día de reinicio semanal</span>
+              <select
+                value={budget.startDayOfWeek !== undefined ? budget.startDayOfWeek : 1}
+                onChange={(e) => setBudget((b) => ({ ...b, startDayOfWeek: Number(e.target.value) }))}
+                className="mt-1 w-full bg-transparent text-sm font-black outline-none font-bold text-[#111827]"
+              >
+                <option value={1}>Lunes</option>
+                <option value={2}>Martes</option>
+                <option value={3}>Miércoles</option>
+                <option value={4}>Jueves</option>
+                <option value={5}>Viernes</option>
+                <option value={6}>Sábado</option>
+                <option value={0}>Domingo</option>
+              </select>
+            </label>
+          )}
+          {budget.period === "month" && (
+            <label className="block rounded-2xl bg-[#f7f8fc] px-3 py-2 border border-[#e5e7eb]">
+              <span className="text-[11px] font-black uppercase tracking-wide text-[#94a3b8]">Día de reinicio mensual</span>
+              <select
+                value={budget.startDayOfMonth !== undefined ? budget.startDayOfMonth : 1}
+                onChange={(e) => setBudget((b) => ({ ...b, startDayOfMonth: Number(e.target.value) }))}
+                className="mt-1 w-full bg-transparent text-sm font-black outline-none font-bold text-[#111827]"
+              >
+                <option value={1}>Día 1 (Inicio de mes)</option>
+                <option value={5}>Día 5</option>
+                <option value={10}>Día 10</option>
+                <option value={15}>Día 15</option>
+                <option value={20}>Día 20</option>
+                <option value={25}>Día 25</option>
+                <option value={31}>Último día del mes</option>
+              </select>
+            </label>
+          )}
+        </section>
+      )}
+
+      {budget.period === "biweek" && (
+        <section className="mt-5 rounded-[1.6rem] bg-white p-4 shadow-sm ring-1 ring-[#e5e7eb]">
+          <p className="text-xs font-bold text-[#6b7280] leading-relaxed flex items-center gap-1.5">
+            <ShieldCheck className="h-4 w-4 text-[#36d399] shrink-0" />
+            <span>El presupuesto quincenal se reinicia automáticamente los días 15 y el último día de cada mes (28/29 en Febrero, 30 o 31).</span>
+          </p>
+        </section>
+      )}
+
+      <section className="mt-5 rounded-[1.6rem] bg-white p-4 shadow-sm ring-1 ring-[#e5e7eb]"><p className="text-sm font-black">Alertas activas</p><div className="mt-3 grid grid-cols-3 gap-2">{["50", "80", "100"].map((alert) => <button key={alert} onClick={() => setBudget((b) => ({ ...b, alerts: { ...b.alerts, [alert]: !b.alerts[alert] } }))} className={cx("rounded-2xl px-2 py-3 text-xs font-black", budget.alerts[alert] ? "bg-[#ecfdf5] text-[#059669]" : "bg-[#f1f5f9] text-[#94a3b8]")}><Bell className="mx-auto mb-1 h-4 w-4" />{alert}%</button>)}</div></section><div className="mt-5 space-y-3">{customCategories.filter((item) => item.name !== "Nómina").map((category) => <CategoryBudgetCard key={category.id} category={category} spent={expenseByCategory[category.name] || 0} limit={budget.categoryLimits[category.name] || 0} onLimitChange={(value) => setBudget((b) => ({ ...b, categoryLimits: { ...b.categoryLimits, [category.name]: value } }))} customCategories={customCategories} />)}</div></div>;
 }
 
 function CategoryBudgetCard({ category, spent, limit, onLimitChange, customCategories }: { category: Category; spent: number; limit: number; onLimitChange: (value: number) => void; customCategories: Category[] }) {
@@ -1107,7 +1229,7 @@ function LandingView({ onLogin }: { onLogin: () => void }) {
             transition={{ type: "spring", stiffness: 200, damping: 20 }}
             className="w-24 h-24 rounded-[2.2rem] overflow-hidden flex items-center justify-center shadow-[0_20px_45px_rgba(66,214,181,0.35)] relative bg-white p-2"
           >
-            <img src="/logo_mark.png" alt="MonIA" className="w-full h-full object-contain" />
+            <img src="logo_mark.png" alt="MonIA" className="w-full h-full object-contain" />
           </motion.div>
           
           <motion.div 
@@ -1116,7 +1238,7 @@ function LandingView({ onLogin }: { onLogin: () => void }) {
             transition={{ delay: 0.15 }}
             className="mt-6 flex justify-center"
           >
-            <img src="/logo_full.png" alt="MonIA Logo" className="h-14 object-contain" />
+            <img src="logo_full.png" alt="MonIA Logo" className="h-14 object-contain" />
           </motion.div>
           <motion.p 
             initial={{ y: 15, opacity: 0 }}
@@ -1359,6 +1481,8 @@ export default function MonIAGastosPreview() {
     totalByPeriod: { week: 0, biweek: 0, month: 0, year: 0 },
     categoryLimits: { Comida: 0, Supermercado: 0, Transporte: 0, Servicios: 0, Salud: 0, Educación: 0, Hogar: 0, Entretenimiento: 0, Ahorro: 0, Otros: 0 },
     alerts: { "50": true, "80": true, "100": true },
+    startDayOfWeek: 1, // Lunes por defecto
+    startDayOfMonth: 1, // Día 1 por defecto
   };
 
   const defaultRecurring: RecurringExpense[] = [
@@ -1596,7 +1720,7 @@ export default function MonIAGastosPreview() {
               transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
               className="relative w-24 h-24 rounded-[2.2rem] overflow-hidden flex items-center justify-center shadow-[0_15px_35px_rgba(66,214,181,0.3)] bg-white p-2"
             >
-              <img src="/logo_mark.png" alt="MonIA" className="w-full h-full object-contain" />
+              <img src="logo_mark.png" alt="MonIA" className="w-full h-full object-contain" />
             </motion.div>
             <motion.p
               animate={{ opacity: [0.4, 1, 0.4] }}
