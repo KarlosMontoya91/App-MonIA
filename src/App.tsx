@@ -388,12 +388,22 @@ function isWithinPeriod(dateISO: string, budget: BudgetConfig) {
   if (period === "biweek") {
     let startOfCurrentPeriod: Date;
     let endOfCurrentPeriod: Date;
-    if (now.getDate() <= 15) {
-      startOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
-      endOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), 15);
+    const lastDayOfCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+    if (now.getDate() < 15) {
+      // Período anterior comenzó en el último día del mes pasado, y termina el 14 de este mes
+      const lastDayOfPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+      startOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth() - 1, lastDayOfPrevMonth);
+      endOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), 14);
+    } else if (now.getDate() < lastDayOfCurrentMonth) {
+      // Período comenzó el 15 de este mes, y termina el día anterior al último día de este mes
+      startOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), 15);
+      endOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), lastDayOfCurrentMonth - 1);
     } else {
-      startOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), 16);
-      endOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth() + 1, 0); // last day of month
+      // Es el último día de este mes. Comienza hoy y termina el 14 del próximo mes
+      startOfCurrentPeriod = new Date(now.getFullYear(), now.getMonth(), lastDayOfCurrentMonth);
+      const nextMonthDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      endOfCurrentPeriod = new Date(nextMonthDate.getFullYear(), nextMonthDate.getMonth(), 14);
     }
     return date >= startOfCurrentPeriod && date <= endOfCurrentPeriod;
   }
@@ -519,7 +529,7 @@ function MetricGlass({ label, value }: { label: string; value: string }) {
 }
 
 function QuickExpenseInput({ onSave, compact = false, customCategories, onOpenCreateCategory }: { onSave: (transaction: ParsedTransaction) => void; compact?: boolean; customCategories: Category[]; onOpenCreateCategory: (callback: (name: string) => void) => void }) {
-  const [mode, setMode] = useState<"voice" | "text" | "manual">("text");
+  const [mode, setMode] = useState<"voice" | "text" | "manual">("voice");
   const [text, setText] = useState("");
   const [parsed, setParsed] = useState<ParsedTransaction | null>(null);
   const [error, setError] = useState("");
@@ -1513,6 +1523,7 @@ export default function MonIAGastosPreview() {
     city: "México",
   });
   const [categoriesState, setCategoriesState] = useState<Category[]>(initialCategories);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   const [moreSection, setMoreSection] = useState<MoreSection>("menu");
   const [modalOpen, setModalOpen] = useState(false);
@@ -1572,6 +1583,7 @@ export default function MonIAGastosPreview() {
                 currentUser.photoURL || ""
               ));
             }
+            setIsDataLoaded(true);
           } else {
             // El documento no existe en la nube, inicializar cuenta totalmente limpia
             const cleanProf = defaultProfileEmpty(
@@ -1593,10 +1605,16 @@ export default function MonIAGastosPreview() {
             setRecurring(defaultRecurring);
             setProfile(cleanProf);
             setCategoriesState(initialCategories);
+            setIsDataLoaded(true);
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error("Error al cargar datos desde Firestore:", error);
-          showToast("Error al cargar tus datos. Usando base local.");
+          setIsDataLoaded(false);
+          if (error && (error.code === "permission-denied" || (error.message && error.message.includes("permission-denied")))) {
+            showToast("Error de permisos en Firebase. Verifica las reglas de seguridad en la consola.");
+          } else {
+            showToast("Error al cargar tus datos. Usando base local.");
+          }
         }
       } else {
         setTransactions([]);
@@ -1613,6 +1631,7 @@ export default function MonIAGastosPreview() {
           city: "México",
         });
         setCategoriesState(initialCategories);
+        setIsDataLoaded(false);
       }
       setLoading(false);
     });
@@ -1623,12 +1642,12 @@ export default function MonIAGastosPreview() {
   const isLoadedRef = useRef(false);
 
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && user && isDataLoaded) {
       isLoadedRef.current = true;
     } else {
       isLoadedRef.current = false;
     }
-  }, [loading, user]);
+  }, [loading, user, isDataLoaded]);
 
   useEffect(() => {
     if (!user || !isLoadedRef.current) return;
