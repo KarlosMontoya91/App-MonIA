@@ -68,7 +68,7 @@ import {
   YAxis,
 } from "recharts";
 import { auth, googleProvider, db } from "./firebase";
-import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
+import { signInWithRedirect, signOut, onAuthStateChanged } from "firebase/auth";
 import type { User as FirebaseUser } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
@@ -1758,15 +1758,10 @@ export default function MonIAGastosPreview() {
     return (
       <LandingView onLogin={async () => {
         try {
-          await signInWithPopup(auth, googleProvider);
-          showToast("¡Sesión iniciada con éxito!");
+          await signInWithRedirect(auth, googleProvider);
         } catch (error: any) {
           console.error("Error al iniciar sesión:", error);
-          if (error.code === "auth/popup-closed-by-user") {
-            showToast("Inicio de sesión cancelado.");
-          } else {
-            showToast("Error al conectar con Google.");
-          }
+          showToast("Error al conectar con Google.");
         }
       }} />
     );
